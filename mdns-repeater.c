@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <pwd.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <net/if.h>
@@ -46,11 +47,11 @@
 #define MAX_SUBNETS 16
 
 struct if_sock {
-	const char *ifname;		/* interface name  */
-	int sockfd;				/* socket filedesc */
+	const char *ifname;	/* interface name  */
+	int sockfd;		/* socket filedesc */
 	struct in_addr addr;	/* interface addr  */
 	struct in_addr mask;	/* interface mask  */
-	struct in_addr net;		/* interface network (computed) */
+	struct in_addr net;	/* interface network (computed) */
 };
 
 struct subnet {
@@ -211,6 +212,12 @@ static int create_send_sock(int recv_sockfd, const char *ifname, struct if_sock 
 		return r;
 	}
 
+	int ttl = 255; // IP TTL should be 255: https://datatracker.ietf.org/doc/html/rfc6762#section-11
+	if ((r = setsockopt(sd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl))) < 0) {
+		log_message(LOG_ERR, "send setsockopt(IP_MULTICAST_TTL): %s", strerror(errno));
+		return r;
+	}
+
 	char *addr_str = strdup(inet_ntoa(sockdata->addr));
 	char *mask_str = strdup(inet_ntoa(sockdata->mask));
 	char *net_str  = strdup(inet_ntoa(sockdata->net));
@@ -235,6 +242,7 @@ static ssize_t send_packet(int fd, const void *data, size_t len) {
 }
 
 static void mdns_repeater_shutdown(int sig) {
+	(void)sig;
 	shutdown_flag = 1;
 }
 
@@ -327,6 +335,7 @@ static void show_help(const char *progname) {
 					"	-b	blacklist subnet (eg. 192.168.1.1/24)\n"
 					"	-w	whitelist subnet (eg. 192.168.1.1/24)\n"
 					"	-p	specifies the pid file path (default: " PIDFILE ")\n"
+					"	-u	run as this user (by name)\n"
 					"	-h	shows this help\n"
 					"\n"
 		);
@@ -387,7 +396,7 @@ static int parse_opts(int argc, char *argv[]) {
 	int help = 0;
 	struct subnet *ss;
 	char *msg;
-	while ((c = getopt(argc, argv, "hfdp:b:w:")) != -1) {
+	while ((c = getopt(argc, argv, "hfdp:b:w:u:")) != -1) {
 		switch (c) {
 			case 'h': help = 1; break;
 			case 'f': foreground = 1; break;
@@ -469,6 +478,23 @@ static int parse_opts(int argc, char *argv[]) {
 			case ':':
 				fputs("\n", stderr);
 				break;
+
+			case 'u': {
+				const struct passwd* user;
+				if ((user = getpwnam(optarg)) == NULL) {
+					log_message(LOG_ERR, "No such user '%s'", optarg);
+					exit(2);
+				}
+				errno = 0;
+				if (setgid(user->pw_gid) != 0) {
+					log_message(LOG_ERR, "Failed to switch to group %d - %s", user->pw_gid, strerror(errno));
+					exit(2);
+				} else if (setuid(user->pw_uid) != 0) {
+					log_message(LOG_ERR, "Failed to switch to user %s (%d) - %s", user->pw_name, user->pw_uid, strerror(errno));
+					exit(2);
+				}
+				break;
+			}
 
 			default:
 				log_message(LOG_ERR, "unknown option %c", optopt);
