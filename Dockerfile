@@ -7,12 +7,14 @@ RUN set -ex && \
 
 FROM monstrenyatko/alpine
 
-LABEL maintainer="Oleg Kovalenko <monstrenyatko@gmail.com>"
+LABEL maintainer="Ashwin Venkatesan <ashwinjv@gmail.com>"
 
 COPY --from=builder /bin/mdns-repeater /bin/mdns-repeater
 RUN chown root:root /bin/mdns-repeater
 RUN chmod 0755 /bin/mdns-repeater
 RUN setcap cap_net_raw=+ep /bin/mdns-repeater
+RUN apk update && apk add --no-cache docker-cli
+RUN apk update && apk add --no-cache jq
 
 ENV APP_NAME="mdns-repeater-app" \
     APP_BIN="/bin/mdns-repeater" \
